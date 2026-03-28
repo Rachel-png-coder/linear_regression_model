@@ -1,7 +1,7 @@
 """
 Power Consumption Prediction API
 FastAPI endpoint for predicting building energy usage
-Supports multiple date formats including AM/PM
+Supports date format: DD-MM-YYYY HH:MM
 """
 
 import joblib
@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 
 app = FastAPI(
     title="Power Consumption Prediction API",
-    description="Predict building power consumption using environmental factors. Supports AM/PM date formats.",
+    description="Predict building power consumption using environmental factors",
     version="1.0.0"
 )
 
@@ -62,86 +62,36 @@ training_history = []
 
 def parse_dates_flexible(df, date_column='DateTime'):
     """
-    Parse dates with multiple possible formats including AM/PM
-    Handles various date formats and time representations
+    Parse dates with DD-MM-YYYY HH:MM format (primary)
+    Also handles other common formats
     """
     
     print(f"🔍 Original date sample: {df[date_column].iloc[0] if len(df) > 0 else 'No data'}")
     
-    # Step 1: Clean the data - remove extra spaces and standardize
+    # Step 1: Clean the data - remove extra spaces
     df[date_column] = df[date_column].astype(str).str.strip()
     
-    # Step 2: Define comprehensive format list
-    date_formats = []
-    
-    # Date part formats
-    date_patterns = [
-        ('%m', '%d', '%Y'),  # MM/DD/YYYY
-        ('%d', '%m', '%Y'),  # DD/MM/YYYY
-        ('%Y', '%m', '%d'),  # YYYY/MM/DD
+    # Step 2: Define formats specifically for your data
+    date_formats = [
+        # Your primary format: DD-MM-YYYY HH:MM
+        '%d-%m-%Y %H:%M',        # 01-01-2017 00:00
+        '%d-%m-%Y %H:%M:%S',     # 01-01-2017 00:00:00
+        
+        # Other common formats
+        '%d/%m/%Y %H:%M',        # 01/01/2017 00:00
+        '%d/%m/%Y %H:%M:%S',     # 01/01/2017 00:00:00
+        '%Y-%m-%d %H:%M:%S',     # 2017-01-01 00:00:00
+        '%Y-%m-%d %H:%M',        # 2017-01-01 00:00
+        '%m/%d/%Y %H:%M',        # 01/13/2017 00:00
+        '%m/%d/%Y %H:%M:%S',     # 01/13/2017 00:00:00
+        
+        # AM/PM formats (if needed)
+        '%d-%m-%Y %I:%M %p',     # 01-01-2017 12:00 AM
+        '%d/%m/%Y %I:%M %p',     # 01/01/2017 12:00 AM
+        '%m/%d/%Y %I:%M %p',     # 01/13/2017 12:00 AM
     ]
     
-    # Separators
-    separators = ['/', '-']
-    
-    # Time formats to try (including AM/PM)
-    time_formats = [
-        '',                    # No time
-        ' %H:%M',             # 24-hour without seconds
-        ' %H:%M:%S',          # 24-hour with seconds
-        ' %I:%M %p',          # 12-hour with AM/PM (space)
-        ' %I:%M:%S %p',       # 12-hour with seconds and AM/PM
-        ' %I:%M%p',           # 12-hour without space (12:00AM)
-        ' %I%p',              # 12-hour hour only (12AM)
-        ' %I %p',             # 12-hour with space (12 AM)
-        ' %I:%M%p',           # 12-hour with AM/PM no space
-        ' %I:%M:%S%p',        # 12-hour with seconds no space
-    ]
-    
-    # Build all format combinations
-    for date_parts in date_patterns:
-        for sep in separators:
-            # Date only formats
-            date_format = sep.join(date_parts)
-            date_formats.append(date_format)
-            
-            # Date + time formats
-            for time_format in time_formats:
-                full_format = date_format + time_format
-                date_formats.append(full_format)
-    
-    # Add common formats with spaces
-    common_formats = [
-        '%m/%d/%Y %I:%M %p',
-        '%m/%d/%Y %I:%M:%S %p',
-        '%m/%d/%Y %I:%M%p',
-        '%m/%d/%Y %I%p',
-        '%d/%m/%Y %I:%M %p',
-        '%d/%m/%Y %I:%M:%S %p',
-        '%Y-%m-%d %I:%M %p',
-        '%Y-%m-%d %I:%M:%S %p',
-        '%m-%d-%Y %I:%M %p',
-        '%d-%m-%Y %I:%M %p',
-        '%m/%d/%Y %H:%M',
-        '%m/%d/%Y %H:%M:%S',
-        '%d/%m/%Y %H:%M',
-        '%d/%m/%Y %H:%M:%S',
-        '%Y-%m-%d %H:%M:%S',
-        '%Y-%m-%d %H:%M',
-        '%m/%d/%Y',
-        '%d/%m/%Y',
-        '%Y-%m-%d',
-    ]
-    
-    date_formats.extend(common_formats)
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    date_formats = [x for x in date_formats if not (x in seen or seen.add(x))]
-    
-    # Step 3: Try each format
-    print(f"🔄 Attempting to parse dates (trying {len(date_formats)} formats)...")
-    
+    # Try each format
     for date_format in date_formats:
         try:
             df[date_column] = pd.to_datetime(df[date_column], format=date_format)
@@ -150,61 +100,14 @@ def parse_dates_flexible(df, date_column='DateTime'):
         except (ValueError, TypeError):
             continue
     
-    # Step 4: Try pandas flexible parsing with mixed formats
+    # Try pandas flexible parsing
     try:
-        print("🔄 Trying pandas flexible parsing with dayfirst=False...")
-        df[date_column] = pd.to_datetime(df[date_column], format='mixed', dayfirst=False)
-        print("✅ Successfully parsed with mixed format (MM/DD/YYYY)")
+        df[date_column] = pd.to_datetime(df[date_column])
+        print(f"✅ Successfully parsed with pandas auto-detection")
         return df
-    except Exception:
-        pass
-    
-    try:
-        print("🔄 Trying pandas flexible parsing with dayfirst=True...")
-        df[date_column] = pd.to_datetime(df[date_column], format='mixed', dayfirst=True)
-        print("✅ Successfully parsed with mixed format (DD/MM/YYYY)")
-        return df
-    except Exception:
-        pass
-    
-    # Step 5: Try manual conversion using dateutil for stubborn formats
-    try:
-        print("🔄 Attempting manual date parsing with dateutil...")
-        from dateutil import parser
-        
-        def manual_parse(date_str):
-            try:
-                # Try parsing with fuzzy matching for AM/PM
-                return parser.parse(date_str, fuzzy=True)
-            except:
-                return pd.NaT
-        
-        df[date_column] = df[date_column].apply(manual_parse)
-        if df[date_column].isna().sum() < len(df) * 0.2:  # Less than 20% failed
-            print("✅ Successfully parsed using manual dateutil parser")
-            return df
     except Exception as e:
-        print(f"⚠️ Manual parsing failed: {e}")
-    
-    # Step 6: If all attempts fail, provide detailed error
-    sample_values = df[date_column].head(5).tolist()
-    error_msg = (
-        f"❌ Unable to parse dates in column '{date_column}'.\n"
-        f"Sample values (first 5):\n"
-    )
-    for i, val in enumerate(sample_values, 1):
-        error_msg += f"  {i}. '{val}'\n"
-    
-    error_msg += (
-        f"\n✅ Supported formats include:\n"
-        f"  • MM/DD/YYYY HH:MM AM/PM (e.g., 1/13/2017 12:00 AM)\n"
-        f"  • DD/MM/YYYY HH:MM AM/PM (e.g., 13/1/2017 12:00 PM)\n"
-        f"  • YYYY-MM-DD HH:MM:SS (e.g., 2017-01-13 00:00:00)\n"
-        f"  • MM/DD/YYYY HH:MM (e.g., 1/13/2017 14:30)\n"
-        f"  • And many other variations\n"
-    )
-    
-    raise ValueError(error_msg)
+        print(f"⚠️ Date parsing failed: {e}")
+        raise ValueError(f"Unable to parse dates. Sample values: {df[date_column].head(3).tolist()}")
 
 
 def load_model_artifacts():
@@ -221,7 +124,6 @@ def load_model_artifacts():
     
     if not os.path.exists(MODEL_PATH):
         print(f"❌ Model file not found at: {MODEL_PATH}")
-        print(f"Current working directory: {os.getcwd()}")
         
         # Check if saved_model exists in current directory
         if os.path.exists("saved_model"):
@@ -238,7 +140,6 @@ def load_model_artifacts():
                 return False
         else:
             print(f"✗ 'saved_model' not found in current directory")
-            print(f"Files in current directory: {os.listdir('.')}")
             return False
     else:
         try:
@@ -276,10 +177,6 @@ def load_model_artifacts():
     return True
 
 
-# ============================================
-# Helper Functions
-# ============================================
-
 def engineer_features(temperature, humidity, wind_speed, general_diffuse_flows, 
                       year, month, day, hour):
     """Create feature array with all required features"""
@@ -303,171 +200,6 @@ def engineer_features(temperature, humidity, wind_speed, general_diffuse_flows,
     ]])
     
     return features_array
-
-
-def retrain_model_with_new_data(new_data: pd.DataFrame):
-    """Retrain model with new data with enhanced AM/PM support"""
-    global model, scaler, features, last_training_time, training_history
-    
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import r2_score, mean_squared_error
-    from sklearn.preprocessing import StandardScaler
-    
-    print("\n" + "=" * 50)
-    print("Starting Model Retraining...")
-    print("=" * 50)
-    
-    # ===== ENHANCED: Find date column with multiple variations =====
-    print("\n📅 Processing dates...")
-    
-    date_column_candidates = ['DateTime', 'Date', 'Time', 'Datetime', 'date', 'datetime', 'timestamp', 'Timestamp']
-    date_column = None
-    
-    for candidate in date_column_candidates:
-        if candidate in new_data.columns:
-            date_column = candidate
-            break
-    
-    if date_column:
-        print(f"📅 Found date column: '{date_column}'")
-        print(f"📅 Sample values: {new_data[date_column].head(3).tolist()}")
-        
-        # Parse dates with AM/PM support
-        new_data = parse_dates_flexible(new_data, date_column)
-        
-        # Extract features from DateTime
-        new_data['Year'] = new_data[date_column].dt.year
-        new_data['Month'] = new_data[date_column].dt.month
-        new_data['Day'] = new_data[date_column].dt.day
-        new_data['Hour'] = new_data[date_column].dt.hour
-        new_data['DayOfWeek'] = new_data[date_column].dt.dayofweek
-        
-        print(f"✅ Extracted date features: Year, Month, Day, Hour, DayOfWeek")
-        print(f"📊 Date range: {new_data[date_column].min()} to {new_data[date_column].max()}")
-    else:
-        print("⚠️ No date column found")
-        # Check if date components already exist
-        if 'Year' not in new_data.columns:
-            raise ValueError(
-                "No date column found and 'Year' column missing. "
-                "Please provide DateTime column or date components (Year, Month, Day, Hour)."
-            )
-        else:
-            print("✅ Using existing date components")
-    
-    # Handle column name variations
-    column_mappings = {
-        'Wind Speed': 'Wind_Speed',
-        'Wind_Speed': 'Wind_Speed',
-        'general diffuse flows': 'general_diffuse_flows',
-        'general_diffuse_flows': 'general_diffuse_flows',
-        'Temperature': 'Temperature',
-        'Humidity': 'Humidity',
-        'Zone 1': 'Zone 1',
-        'Zone1': 'Zone 1'
-    }
-    
-    for old_name, new_name in column_mappings.items():
-        if old_name in new_data.columns and old_name != new_name:
-            new_data = new_data.rename(columns={old_name: new_name})
-            print(f"📝 Renamed column: '{old_name}' -> '{new_name}'")
-    
-    # Define features
-    feature_cols = ['Temperature', 'Humidity', 'Wind_Speed', 
-                    'general_diffuse_flows', 'Year', 'Month', 'Day', 
-                    'Hour', 'DayOfWeek']
-    
-    print(f"\n📊 Required features: {feature_cols}")
-    print(f"📊 Available columns: {list(new_data.columns)}")
-    
-    # Check if all required columns exist
-    missing_cols = [col for col in feature_cols if col not in new_data.columns]
-    if missing_cols:
-        raise ValueError(
-            f"Missing required columns: {missing_cols}\n"
-            f"Available columns: {list(new_data.columns)}"
-        )
-    
-    # Prepare features and target
-    X = new_data[feature_cols]
-    y = new_data['Zone 1']
-    
-    # Remove NaN
-    initial_rows = len(X)
-    mask = ~(X.isna().any(axis=1) | y.isna())
-    X = X[mask]
-    y = y[mask]
-    
-    print(f"\n🧹 Data cleaning:")
-    print(f"   Initial rows: {initial_rows}")
-    print(f"   After removing NaN: {len(X)} rows")
-    print(f"   Removed: {initial_rows - len(X)} rows")
-    
-    if len(X) < 100:
-        raise ValueError(f"Need at least 100 samples for retraining. Got {len(X)} samples.")
-    
-    # Split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    print(f"\n📊 Data split:")
-    print(f"   Training samples: {len(X_train)}")
-    print(f"   Testing samples: {len(X_test)}")
-    
-    # Scale
-    new_scaler = StandardScaler()
-    X_train_scaled = new_scaler.fit_transform(X_train)
-    X_test_scaled = new_scaler.transform(X_test)
-    
-    # Train
-    print(f"\n🚀 Training Random Forest model...")
-    new_model = RandomForestRegressor(
-        n_estimators=100,
-        max_depth=20,
-        min_samples_split=5,
-        random_state=42,
-        n_jobs=-1,
-        verbose=0
-    )
-    new_model.fit(X_train_scaled, y_train)
-    
-    # Evaluate
-    y_pred = new_model.predict(X_test_scaled)
-    r2 = r2_score(y_test, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    
-    print(f"\n📈 Model Performance:")
-    print(f"   R² Score: {r2:.4f}")
-    print(f"   RMSE: {rmse:.4f}")
-    
-    # Save training info
-    training_history.append({
-        "timestamp": datetime.now().isoformat(),
-        "samples": len(X),
-        "r2_score": r2,
-        "rmse": rmse
-    })
-    
-    # Save model files with absolute path
-    saved_model_dir = os.path.join(current_dir, "saved_model")
-    os.makedirs(saved_model_dir, exist_ok=True)
-    
-    joblib.dump(new_model, os.path.join(saved_model_dir, "Random Forest_model.pkl"))
-    joblib.dump(new_scaler, os.path.join(saved_model_dir, "scaler.pkl"))
-    joblib.dump(feature_cols, os.path.join(saved_model_dir, "feature_names.pkl"))
-    
-    print(f"\n💾 Model saved to: {saved_model_dir}")
-    
-    # Update globals
-    model = new_model
-    scaler = new_scaler
-    features = feature_cols
-    last_training_time = datetime.now()
-    
-    print("\n" + "=" * 50)
-    print("✅ Model retraining completed successfully!")
-    print("=" * 50)
-    
-    return new_model, new_scaler, r2, len(X)
 
 
 # ============================================
@@ -542,10 +274,9 @@ async def root():
         "model_loaded": model is not None,
         "features": features,
         "last_training": last_training_time.isoformat() if last_training_time else None,
-        "date_format_support": "Full AM/PM support for all common date formats",
         "endpoints": {
             "predict": "/predict (POST)",
-            "retrain": "/retrain (POST) - Supports AM/PM dates",
+            "retrain": "/retrain (POST) - Supports DD-MM-YYYY HH:MM format",
             "training_status": "/training/status (GET)",
             "docs": "/docs"
         }
@@ -605,66 +336,181 @@ async def predict(request: PredictionRequest):
 async def retrain_model(file: UploadFile = File(...)):
     """
     Retrain model with new CSV data
-    Supports dates with AM/PM formats like:
-    - 1/13/2017 12:00 AM
-    - 13/1/2017 2:30 PM
-    - 2017-01-13 11:59 PM
-    - And many more formats
+    Expected format: DD-MM-YYYY HH:MM (e.g., 01-01-2017 00:00)
     """
     
     try:
         # Read uploaded file
         contents = await file.read()
-        new_data = pd.read_csv(io.StringIO(contents.decode('utf-8')))
         
-        print(f"\n📊 Received file: {file.filename}")
-        print(f"📊 Total rows: {len(new_data)}")
-        print(f"📊 Columns: {list(new_data.columns)}")
+        # Try different encodings
+        try:
+            new_data = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+        except UnicodeDecodeError:
+            try:
+                new_data = pd.read_csv(io.StringIO(contents.decode('latin-1')))
+            except:
+                new_data = pd.read_csv(io.StringIO(contents.decode('iso-8859-1')))
         
-        # Validate required columns
-        required_cols = ['Zone 1', 'Temperature', 'Humidity']
-        missing_cols = [col for col in required_cols if col not in new_data.columns]
+        print(f"\n{'='*50}")
+        print(f"📊 Received file: {file.filename}")
+        print(f"{'='*50}")
+        print(f"Total rows: {len(new_data)}")
         
+        # ===== FIX: Rename columns to match expected format =====
+        print(f"\n📝 Normalizing column names...")
+        
+        # Rename columns to match expected names
+        column_mapping = {
+            'Wind Speed': 'Wind_Speed',
+            'general diffuse flows': 'general_diffuse_flows',
+            'Zone 1': 'Zone 1',
+            'Temperature': 'Temperature',
+            'Humidity': 'Humidity'
+        }
+        
+        for old_name, new_name in column_mapping.items():
+            if old_name in new_data.columns:
+                new_data = new_data.rename(columns={old_name: new_name})
+                print(f"   Renamed: '{old_name}' -> '{new_name}'")
+        
+        # ===== FIX: Parse dates with DD-MM-YYYY HH:MM format =====
+        print(f"\n📅 Parsing dates...")
+        
+        if 'DateTime' in new_data.columns:
+            # Parse dates (your format: 01-01-2017 00:00)
+            new_data['DateTime'] = pd.to_datetime(new_data['DateTime'], format='%d-%m-%Y %H:%M', errors='coerce')
+            
+            # Check if parsing failed for some rows
+            failed_parses = new_data['DateTime'].isna().sum()
+            if failed_parses > 0:
+                print(f"⚠️ {failed_parses} rows failed to parse. Trying alternative format...")
+                # Try with seconds
+                new_data['DateTime'] = pd.to_datetime(new_data['DateTime'], format='%d-%m-%Y %H:%M:%S', errors='coerce')
+                failed_parses = new_data['DateTime'].isna().sum()
+                if failed_parses > 0:
+                    # Try auto-detection
+                    new_data['DateTime'] = pd.to_datetime(new_data['DateTime'], errors='coerce')
+            
+            # Extract date features
+            new_data['Year'] = new_data['DateTime'].dt.year
+            new_data['Month'] = new_data['DateTime'].dt.month
+            new_data['Day'] = new_data['DateTime'].dt.day
+            new_data['Hour'] = new_data['DateTime'].dt.hour
+            new_data['DayOfWeek'] = new_data['DateTime'].dt.dayofweek
+            
+            print(f"✅ Successfully parsed dates")
+            print(f"   Date range: {new_data['DateTime'].min()} to {new_data['DateTime'].max()}")
+            
+            # Drop the original DateTime column
+            new_data = new_data.drop(columns=['DateTime'])
+        else:
+            raise ValueError("CSV must contain a 'DateTime' column")
+        
+        # ===== Prepare features =====
+        feature_cols = ['Temperature', 'Humidity', 'Wind_Speed', 
+                        'general_diffuse_flows', 'Year', 'Month', 'Day', 
+                        'Hour', 'DayOfWeek']
+        
+        # Check for required columns
+        missing_cols = [col for col in feature_cols if col not in new_data.columns]
         if missing_cols:
-            # Try case-insensitive matching
-            for col in missing_cols:
-                found = False
-                for existing_col in new_data.columns:
-                    if existing_col.lower() == col.lower():
-                        # Rename the column
-                        new_data = new_data.rename(columns={existing_col: col})
-                        found = True
-                        print(f"📝 Renamed column: '{existing_col}' -> '{col}'")
-                if not found:
-                    raise HTTPException(
-                        status_code=400, 
-                        detail=f"Missing required column: {col}. Available columns: {list(new_data.columns)}"
-                    )
+            raise ValueError(
+                f"Missing required columns: {missing_cols}\n"
+                f"Available columns: {list(new_data.columns)}\n\n"
+                f"Your CSV should have columns: DateTime, Temperature, Humidity, Wind Speed, general diffuse flows, Zone 1"
+            )
         
-        # Clean data
-        initial_rows = len(new_data)
-        new_data = new_data.dropna()
-        cleaned_rows = len(new_data)
+        # Prepare features and target
+        X = new_data[feature_cols]
+        y = new_data['Zone 1']
+        
+        # Convert to numeric
+        X = X.apply(pd.to_numeric, errors='coerce')
+        y = pd.to_numeric(y, errors='coerce')
+        
+        # Remove NaN
+        initial_rows = len(X)
+        mask = ~(X.isna().any(axis=1) | y.isna())
+        X = X[mask]
+        y = y[mask]
         
         print(f"\n🧹 Data cleaning:")
         print(f"   Initial rows: {initial_rows}")
-        print(f"   After removing NaN: {cleaned_rows} rows")
-        print(f"   Removed: {initial_rows - cleaned_rows} rows")
+        print(f"   Valid rows: {len(X)}")
+        print(f"   Removed: {initial_rows - len(X)} rows")
         
-        if cleaned_rows < 100:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Need at least 100 samples for retraining. Got {cleaned_rows} samples."
-            )
+        if len(X) < 100:
+            raise ValueError(f"Need at least 100 valid samples. Got {len(X)}")
         
-        # Retrain with AM/PM support
-        _, _, r2, samples_used = retrain_model_with_new_data(new_data)
+        # ===== Train the model =====
+        from sklearn.model_selection import train_test_split
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.metrics import r2_score, mean_squared_error
+        
+        print(f"\n🚀 Training Random Forest model...")
+        
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        # Scale
+        new_scaler = StandardScaler()
+        X_train_scaled = new_scaler.fit_transform(X_train)
+        X_test_scaled = new_scaler.transform(X_test)
+        
+        # Train
+        new_model = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=20,
+            min_samples_split=5,
+            random_state=42,
+            n_jobs=-1
+        )
+        new_model.fit(X_train_scaled, y_train)
+        
+        # Evaluate
+        y_pred = new_model.predict(X_test_scaled)
+        r2 = r2_score(y_test, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        
+        print(f"\n📈 Model Performance:")
+        print(f"   R² Score: {r2:.4f}")
+        print(f"   RMSE: {rmse:.4f}")
+        
+        # Save training info
+        training_history.append({
+            "timestamp": datetime.now().isoformat(),
+            "samples": len(X),
+            "r2_score": r2,
+            "rmse": rmse
+        })
+        
+        # Save model files
+        saved_model_dir = os.path.join(current_dir, "saved_model")
+        os.makedirs(saved_model_dir, exist_ok=True)
+        
+        joblib.dump(new_model, os.path.join(saved_model_dir, "Random Forest_model.pkl"))
+        joblib.dump(new_scaler, os.path.join(saved_model_dir, "scaler.pkl"))
+        joblib.dump(feature_cols, os.path.join(saved_model_dir, "feature_names.pkl"))
+        
+        print(f"\n💾 Model saved to: {saved_model_dir}")
+        
+        # Update global variables
+        global model, scaler, features, last_training_time
+        model = new_model
+        scaler = new_scaler
+        features = feature_cols
+        last_training_time = datetime.now()
+        
+        print("\n" + "=" * 50)
+        print("✅ Model retraining completed successfully!")
+        print("=" * 50)
         
         return RetrainResponse(
             status="success",
-            message=f"Model retrained with {samples_used} samples. R² Score: {r2:.4f}",
+            message=f"Model retrained with {len(X)} samples. R² Score: {r2:.4f}",
             new_r2_score=r2,
-            samples_used=samples_used,
+            samples_used=len(X),
             timestamp=datetime.now().isoformat()
         )
         
