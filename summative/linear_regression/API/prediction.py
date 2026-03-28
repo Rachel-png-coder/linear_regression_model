@@ -15,6 +15,8 @@ import os
 from datetime import datetime
 import io
 import tempfile
+import warnings
+warnings.filterwarnings('ignore')
 
 # ============================================
 # Initialize FastAPI App
@@ -179,6 +181,37 @@ def engineer_features(temperature, humidity, wind_speed, general_diffuse_flows,
     return features_array
 
 
+def parse_dates_flexible(df, date_column='DateTime'):
+    """Parse dates with multiple possible formats"""
+    
+    # List of possible date formats
+    date_formats = [
+        '%m/%d/%Y %H:%M',      # 1/13/2017 0:00
+        '%m/%d/%Y %H:%M:%S',   # 1/13/2017 00:00:00
+        '%d/%m/%Y %H:%M',      # 13/1/2017 0:00
+        '%Y-%m-%d %H:%M:%S',   # 2017-01-13 00:00:00
+        '%Y-%m-%d %H:%M',      # 2017-01-13 00:00
+        '%m-%d-%Y %H:%M',      # 01-13-2017 00:00
+    ]
+    
+    for date_format in date_formats:
+        try:
+            df[date_column] = pd.to_datetime(df[date_column], format=date_format)
+            print(f"✅ Successfully parsed dates with format: {date_format}")
+            return df
+        except (ValueError, TypeError):
+            continue
+    
+    # If none work, try pandas auto-detection
+    try:
+        df[date_column] = pd.to_datetime(df[date_column], format='mixed')
+        print("✅ Used pandas auto-detection for dates")
+        return df
+    except Exception as e:
+        print(f"⚠️ Could not parse dates: {e}")
+        raise ValueError(f"Unable to parse dates in column '{date_column}'. Please ensure dates are in a standard format.")
+
+
 def retrain_model_with_new_data(new_data: pd.DataFrame):
     """Retrain model with new data"""
     global model, scaler, features, last_training_time, training_history
@@ -189,23 +222,49 @@ def retrain_model_with_new_data(new_data: pd.DataFrame):
     from sklearn.preprocessing import StandardScaler
     import numpy as np
     
+    # ===== FIX: Handle different date formats =====
+    # Check if DateTime column exists and parse it
+    if 'DateTime' in new_data.columns:
+        new_data = parse_dates_flexible(new_data, 'DateTime')
+    else:
+        # Try to find a date-like column
+        for col in new_data.columns:
+            if 'date' in col.lower() or 'time' in col.lower():
+                new_data = parse_dates_flexible(new_data, col)
+                break
+    
+    # Extract features from DateTime
+    new_data['Year'] = new_data['DateTime'].dt.year
+    new_data['Month'] = new_data['DateTime'].dt.month
+    new_data['Day'] = new_data['DateTime'].dt.day
+    new_data['Hour'] = new_data['DateTime'].dt.hour
+    new_data['DayOfWeek'] = new_data['DateTime'].dt.dayofweek
+    
+    # Handle column name variations
+    column_mapping = {
+        'Wind Speed': 'Wind_Speed',
+        'Wind_Speed': 'Wind_Speed',
+        'general diffuse flows': 'general_diffuse_flows',
+        'general_diffuse_flows': 'general_diffuse_flows',
+    }
+    
+    for old_name, new_name in column_mapping.items():
+        if old_name in new_data.columns and old_name != new_name:
+            new_data = new_data.rename(columns={old_name: new_name})
+    
     # Define features
     feature_cols = ['Temperature', 'Humidity', 'Wind_Speed', 
                     'general_diffuse_flows', 'Year', 'Month', 'Day', 
                     'Hour', 'DayOfWeek']
     
-    # Engineer features if needed
-    if 'DayOfWeek' not in new_data.columns:
-        new_data['DateTime'] = pd.to_datetime(new_data['DateTime'])
-        new_data['Year'] = new_data['DateTime'].dt.year
-        new_data['Month'] = new_data['DateTime'].dt.month
-        new_data['Day'] = new_data['DateTime'].dt.day
-        new_data['Hour'] = new_data['DateTime'].dt.hour
-        new_data['DayOfWeek'] = new_data['DateTime'].dt.dayofweek
+    # Check if all required columns exist
+    missing_cols = [col for col in feature_cols if col not in new_data.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
     
     # Prepare features
     X = new_data[feature_cols]
-    y = new_data['Zone 1']  # Target variable
+    y = new_data['Zone 1']
     
     # Split data
     X_train, X_test, y_train, y_test = train_test_split(
@@ -296,7 +355,7 @@ async def training_status():
         last_training_time=last_training_time.isoformat() if last_training_time else None,
         model_loaded=model is not None,
         features_count=len(features) if features else 0,
-        training_history=training_history[-5:]  # Return last 5 trainings
+        training_history=training_history[-5:]
     )
 
 
@@ -363,6 +422,9 @@ async def retrain_model(
         contents = await file.read()
         new_data = pd.read_csv(io.StringIO(contents.decode('utf-8')))
         
+        print(f"📊 Received data with {len(new_data)} rows")
+        print(f"📋 Columns: {list(new_data.columns)}")
+        
         # Validate required columns
         required_cols = ['Zone 1', 'Temperature', 'Humidity']
         missing_cols = [col for col in required_cols if col not in new_data.columns]
@@ -378,6 +440,8 @@ async def retrain_model(
         new_data = new_data.dropna()
         cleaned_rows = len(new_data)
         
+        print(f"🧹 Cleaned data: {cleaned_rows} rows (removed {initial_rows - cleaned_rows} rows with NaN)")
+        
         if cleaned_rows < 100:
             raise HTTPException(
                 status_code=400,
@@ -386,6 +450,8 @@ async def retrain_model(
         
         # Retrain model
         new_model, new_scaler, r2, samples_used = retrain_model_with_new_data(new_data)
+        
+        print(f"✅ Retraining complete! R² Score: {r2:.4f}")
         
         return RetrainResponse(
             status="success",
@@ -397,7 +463,10 @@ async def retrain_model(
         
     except pd.errors.EmptyDataError:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Data validation error: {str(e)}")
     except Exception as e:
+        print(f"❌ Retraining error: {e}")
         raise HTTPException(status_code=500, detail=f"Retraining error: {str(e)}")
 
 
@@ -419,6 +488,8 @@ async def retrain_from_stream(data: list[dict]):
         
         # Convert to DataFrame
         new_data = pd.DataFrame(data)
+        
+        print(f"📊 Received {len(new_data)} streamed data points")
         
         # Validate required columns
         required_cols = ['Zone 1', 'Temperature', 'Humidity']
