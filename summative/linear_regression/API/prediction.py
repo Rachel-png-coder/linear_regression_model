@@ -45,9 +45,9 @@ app.add_middleware(
 # ============================================
 
 # Use environment variable for model path (for Render deployment)
-MODEL_PATH = os.getenv("MODEL_PATH", "saved_model/Random Forest_model.pkl")
-SCALER_PATH = os.getenv("SCALER_PATH", "saved_model/scaler.pkl")
-FEATURES_PATH = os.getenv("FEATURES_PATH", "saved_model/feature_names.pkl")
+MODEL_PATH = "saved_model/Random Forest_model.pkl"
+SCALER_PATH = "saved_model/scaler.pkl"
+FEATURES_PATH = "saved_model/feature_names.pkl"
 
 # Global variables
 model = None
@@ -58,37 +58,58 @@ training_history = []
 
 def load_model_artifacts():
     """Load the trained model, scaler, and feature names"""
-    global model, scaler, features, last_training_time
+    global model, scaler, features, last_training_time, MODEL_PATH, SCALER_PATH, FEATURES_PATH
     
     print("=" * 50)
     print("Loading Model Artifacts...")
     print("=" * 50)
+    print(f"Looking for model at: {MODEL_PATH}")
+    
+    # Check if the main path exists
+    if not os.path.exists(MODEL_PATH):
+        print(f"⚠️ Model not found at {MODEL_PATH}, trying alternative paths...")
+        
+        # Try alternative paths
+        alt_paths = [
+            "saved_model/Random Forest_model.pkl",
+            "Random Forest_model.pkl",
+            "/app/saved_model/Random Forest_model.pkl",
+            os.path.join(os.path.dirname(__file__), "saved_model", "Random Forest_model.pkl")
+        ]
+        
+        found = False
+        for path in alt_paths:
+            if os.path.exists(path):
+                MODEL_PATH = path
+                # Also update scaler and features paths
+                SCALER_PATH = path.replace("Random Forest_model.pkl", "scaler.pkl")
+                FEATURES_PATH = path.replace("Random Forest_model.pkl", "feature_names.pkl")
+                print(f"✅ Found model at: {MODEL_PATH}")
+                found = True
+                break
+        
+        if not found:
+            print("❌ Model file not found in any location")
+            return False
     
     try:
-        # Check if files exist, if not use default paths
-        if not os.path.exists(MODEL_PATH):
-            print(f"⚠️ Model not found at {MODEL_PATH}, trying alternative paths...")
-            # Try alternative paths
-            alt_paths = [
-                "Random Forest_model.pkl",
-                "saved_model/Random Forest_model.pkl",
-                "/app/saved_model/Random Forest_model.pkl"
-            ]
-            for path in alt_paths:
-                if os.path.exists(path):
-                    MODEL_PATH = path
-                    print(f"✅ Found model at: {MODEL_PATH}")
-                    break
-        
         model = joblib.load(MODEL_PATH)
         print(f"✅ Model loaded: {type(model).__name__}")
         
-        scaler = joblib.load(SCALER_PATH)
-        print(f"✅ Scaler loaded: {type(scaler).__name__}")
+        if os.path.exists(SCALER_PATH):
+            scaler = joblib.load(SCALER_PATH)
+            print(f"✅ Scaler loaded: {type(scaler).__name__}")
+        else:
+            print(f"⚠️ Scaler not found at {SCALER_PATH}")
+            scaler = None
         
-        features = joblib.load(FEATURES_PATH)
-        print(f"✅ Features loaded: {len(features)} features")
-        print(f"   Features: {features}")
+        if os.path.exists(FEATURES_PATH):
+            features = joblib.load(FEATURES_PATH)
+            print(f"✅ Features loaded: {len(features)} features")
+            print(f"   Features: {features}")
+        else:
+            print(f"⚠️ Features not found at {FEATURES_PATH}")
+            features = None
         
         last_training_time = datetime.now()
         print("\n✅ All artifacts loaded successfully!")
