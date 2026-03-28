@@ -107,40 +107,71 @@ def load_model_artifacts():
 
 
 # ============================================
-# Date Parsing Function - FIXED!
+# Date Parsing Function - FIXED FOR YOUR FORMAT
 # ============================================
 
 def parse_dates_flexible(df, date_column='DateTime'):
     """Parse dates with multiple possible formats"""
     
-    # Common date formats
+    # Make a copy to avoid warnings
+    df = df.copy()
+    
+    # Convert to string and clean
+    df[date_column] = df[date_column].astype(str).str.strip()
+    
+    print(f"📅 Sample dates: {df[date_column].head(3).tolist()}")
+    
+    # List of date formats to try (prioritizing YOUR format)
     date_formats = [
-        '%m/%d/%Y %H:%M',      # 1/13/2017 0:00
+        '%m/%d/%Y %H:%M',      # 1/13/2017 0:00 - YOUR FORMAT
         '%m/%d/%Y %H:%M:%S',   # 1/13/2017 00:00:00
+        '%m/%d/%y %H:%M',      # 1/13/17 0:00
         '%d/%m/%Y %H:%M',      # 13/1/2017 0:00
-        '%d-%m-%Y %H:%M',      # 13-01-2017 00:00
-        '%m-%d-%Y %H:%M',      # 01-13-2017 00:00
         '%Y-%m-%d %H:%M:%S',   # 2017-01-13 00:00:00
         '%Y-%m-%d %H:%M',      # 2017-01-13 00:00
+        '%d-%m-%Y %H:%M',      # 13-01-2017 00:00
+        '%m-%d-%Y %H:%M',      # 01-13-2017 00:00
     ]
     
     # Try each format
+    parsed_success = False
     for date_format in date_formats:
         try:
-            df[date_column] = pd.to_datetime(df[date_column], format=date_format)
+            df[date_column] = pd.to_datetime(df[date_column], format=date_format, errors='raise')
             print(f"✅ Parsed dates with format: {date_format}")
-            return df
+            parsed_success = True
+            break
         except (ValueError, TypeError):
             continue
     
-    # Try pandas auto-detection
-    try:
-        df[date_column] = pd.to_datetime(df[date_column])
-        print("✅ Used pandas auto-detection")
-        return df
-    except Exception as e:
-        print(f"⚠️ Date parsing failed: {e}")
-        raise ValueError(f"Unable to parse dates. Please ensure dates are in standard format.")
+    # If none worked, try with dayfirst parameter
+    if not parsed_success:
+        try:
+            df[date_column] = pd.to_datetime(df[date_column], dayfirst=False, errors='raise')
+            print("✅ Parsed with dayfirst=False (month/day format)")
+            parsed_success = True
+        except:
+            pass
+    
+    # If still not working, try pandas auto-detection
+    if not parsed_success:
+        try:
+            df[date_column] = pd.to_datetime(df[date_column], errors='coerce')
+            print("✅ Used pandas auto-detection")
+            parsed_success = True
+        except Exception as e:
+            print(f"⚠️ Date parsing failed: {e}")
+    
+    # Check for failures
+    if df[date_column].isna().sum() > 0:
+        failed_count = df[date_column].isna().sum()
+        print(f"⚠️ {failed_count} dates failed to parse")
+        failed_examples = df[df[date_column].isna()][date_column].head(3).tolist()
+        print(f"   Failed examples: {failed_examples}")
+        raise ValueError(f"Unable to parse {failed_count} dates. Sample: {failed_examples}")
+    
+    print(f"✅ Successfully parsed {len(df)} dates")
+    return df
 
 
 # ============================================
@@ -181,29 +212,51 @@ def retrain_model_with_new_data(new_data: pd.DataFrame):
     from sklearn.metrics import r2_score, mean_squared_error
     from sklearn.preprocessing import StandardScaler
     
-    # ===== FIX: Handle different date formats =====
-    if 'DateTime' in new_data.columns:
-        new_data = parse_dates_flexible(new_data, 'DateTime')
+    print("\n" + "="*50)
+    print("RETRAINING MODEL")
+    print("="*50)
+    
+    # ===== FIND AND PARSE DATE COLUMN =====
+    date_col = None
+    for col in new_data.columns:
+        if 'date' in col.lower() or 'time' in col.lower() or 'DateTime' in col:
+            date_col = col
+            break
+    
+    if date_col:
+        print(f"📅 Found date column: '{date_col}'")
+        new_data = parse_dates_flexible(new_data, date_col)
+        
+        # Rename to DateTime if different
+        if date_col != 'DateTime':
+            new_data = new_data.rename(columns={date_col: 'DateTime'})
+        
+        # Extract features from DateTime
+        new_data['Year'] = new_data['DateTime'].dt.year
+        new_data['Month'] = new_data['DateTime'].dt.month
+        new_data['Day'] = new_data['DateTime'].dt.day
+        new_data['Hour'] = new_data['DateTime'].dt.hour
+        new_data['DayOfWeek'] = new_data['DateTime'].dt.dayofweek
+        
+        print(f"📊 Date range: {new_data['DateTime'].min()} to {new_data['DateTime'].max()}")
     else:
-        # Try to find any date column
-        date_cols = [col for col in new_data.columns if 'date' in col.lower() or 'time' in col.lower()]
-        if date_cols:
-            new_data = parse_dates_flexible(new_data, date_cols[0])
+        print("⚠️ No date column found, using default values")
+        new_data['Year'] = 2017
+        new_data['Month'] = 1
+        new_data['Day'] = 1
+        new_data['Hour'] = 12
+        new_data['DayOfWeek'] = 0
     
-    # Extract features from DateTime
-    new_data['Year'] = new_data['DateTime'].dt.year
-    new_data['Month'] = new_data['DateTime'].dt.month
-    new_data['Day'] = new_data['DateTime'].dt.day
-    new_data['Hour'] = new_data['DateTime'].dt.hour
-    new_data['DayOfWeek'] = new_data['DateTime'].dt.dayofweek
+    # ===== HANDLE COLUMN NAME VARIATIONS =====
+    rename_map = {
+        'Wind Speed': 'Wind_Speed',
+        'general diffuse flows': 'general_diffuse_flows',
+    }
+    for old, new in rename_map.items():
+        if old in new_data.columns and new not in new_data.columns:
+            new_data = new_data.rename(columns={old: new})
     
-    # Handle column name variations
-    if 'Wind Speed' in new_data.columns and 'Wind_Speed' not in new_data.columns:
-        new_data = new_data.rename(columns={'Wind Speed': 'Wind_Speed'})
-    if 'general diffuse flows' in new_data.columns and 'general_diffuse_flows' not in new_data.columns:
-        new_data = new_data.rename(columns={'general diffuse flows': 'general_diffuse_flows'})
-    
-    # Define features
+    # ===== DEFINE FEATURES =====
     feature_cols = ['Temperature', 'Humidity', 'Wind_Speed', 
                     'general_diffuse_flows', 'Year', 'Month', 'Day', 
                     'Hour', 'DayOfWeek']
@@ -211,21 +264,35 @@ def retrain_model_with_new_data(new_data: pd.DataFrame):
     # Check if all required columns exist
     missing_cols = [col for col in feature_cols if col not in new_data.columns]
     if missing_cols:
+        print(f"❌ Missing columns: {missing_cols}")
+        print(f"   Available columns: {list(new_data.columns)}")
         raise ValueError(f"Missing required columns: {missing_cols}")
     
-    # Prepare features and target
-    X = new_data[feature_cols]
-    y = new_data['Zone 1']
+    print(f"✅ Using features: {feature_cols}")
+    
+    # ===== PREPARE DATA =====
+    X = new_data[feature_cols].copy()
+    
+    # Find target column
+    if 'Zone 1' in new_data.columns:
+        y = new_data['Zone 1']
+    elif 'Zone_1' in new_data.columns:
+        y = new_data['Zone_1']
+    else:
+        raise ValueError("Target column 'Zone 1' not found")
     
     # Remove NaN
+    initial_rows = len(X)
     mask = ~(X.isna().any(axis=1) | y.isna())
     X = X[mask]
     y = y[mask]
     
+    print(f"📊 Data shape: {X.shape[0]} rows (removed {initial_rows - len(X)} rows with NaN)")
+    
     if len(X) < 100:
         raise ValueError(f"Need at least 100 samples. Got {len(X)}")
     
-    # Split
+    # ===== TRAIN MODEL =====
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
     # Scale
@@ -248,7 +315,9 @@ def retrain_model_with_new_data(new_data: pd.DataFrame):
     r2 = r2_score(y_test, y_pred)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
     
-    # Save training info
+    print(f"✅ Model trained - R²: {r2:.4f}, RMSE: {rmse:.2f}")
+    
+    # ===== SAVE MODEL =====
     training_history.append({
         "timestamp": datetime.now().isoformat(),
         "samples": len(X),
@@ -256,7 +325,6 @@ def retrain_model_with_new_data(new_data: pd.DataFrame):
         "rmse": rmse
     })
     
-    # Save model files
     os.makedirs("saved_model", exist_ok=True)
     joblib.dump(new_model, MODEL_PATH)
     joblib.dump(new_scaler, SCALER_PATH)
@@ -267,6 +335,10 @@ def retrain_model_with_new_data(new_data: pd.DataFrame):
     scaler = new_scaler
     features = feature_cols
     last_training_time = datetime.now()
+    
+    print("="*50)
+    print("✅ RETRAINING COMPLETE")
+    print("="*50)
     
     return new_model, new_scaler, r2, len(X)
 
@@ -411,6 +483,7 @@ async def retrain_model(file: UploadFile = File(...)):
         new_data = pd.read_csv(io.StringIO(contents.decode('utf-8')))
         
         print(f"📊 Received {len(new_data)} rows")
+        print(f"📋 Columns: {list(new_data.columns)}")
         
         # Validate required columns
         required_cols = ['Zone 1', 'Temperature', 'Humidity']
