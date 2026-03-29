@@ -6,9 +6,9 @@ humidity, wind speed, solar radiation). Three regression models are compared wit
 ## Dataset Description & Source
 
 **Dataset**: Appliances Energy Prediction Dataset  
-**Source**: UCI Machine Learning Repository  
-**Permanent Link**: https://archive.ics.uci.edu/ml/datasets/Appliances+energy+prediction  
-**Kaggle Mirror**: https://www.kaggle.com/datasets/uciml/appliances-energy-prediction
+This dataset is related to power consumption of three different distribution networks of Tetouan city which is located in north Morocco. 
+**Permanent Link**: https://www.kaggle.com/datasets/ruchikakumbhar/power-consumption-prediction-dataset  
+**Kaggle Mirror**: [https://www.kaggle.com/datasets/uciml/appliances-energy-prediction](https://www.kaggle.com/search?q=energy+consumption+prediction)
 
 **Data Collection Period**: 4.5 months (January-May 2017)  
 **Recording Frequency**: Every 10 minutes  
