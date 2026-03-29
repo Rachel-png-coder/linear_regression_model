@@ -7,10 +7,6 @@ humidity, wind speed, solar radiation). Three regression models are compared wit
 Link to SWAGGER UI: https://linear-regression-model-asgf.onrender.com/docs
 link to YouTube Demo: https://youtu.be/xmubHdDNRLE
 
-
-Link to SWAGGER UI: https://linear-regression-model-asgf.onrender.com/docs
-link to YouTube Demo: https://youtu.be/xmubHdDNRLE
-
 1. Install Required Software
 Before running the app, ensure you have the following installed:
 
